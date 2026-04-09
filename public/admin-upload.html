@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Product Photo Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h2 { margin-bottom: 16px; color: #333; }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #555;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        button:hover { background: #45a049; }
+        button.danger { background: #f44336; }
+        button.danger:hover { background: #da190b; }
+        .gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+        .image-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            overflow: hidden;
+            background: white;
+        }
+        .image-card img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+        }
+        .image-info {
+            padding: 12px;
+        }
+        .image-info p {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 8px;
+            word-break: break-all;
+        }
+        .button-group {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .button-group button {
+            flex: 1;
+            padding: 6px;
+            font-size: 12px;
+        }
+        .preview {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .preview img {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+        .alert {
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 16px;
+        }
+        .alert.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .alert.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h2>📸 Upload Photos</h2>
+            <div class="form-group">
+                <label>Product ID:</label>
+                <input type="number" id="productId" placeholder="Enter product ID">
+            </div>
+            <div class="form-group">
+                <label>Admin Token:</label>
+                <input type="password" id="token" placeholder="Admin token">
+            </div>
+            <div class="form-group">
+                <label>Select Photos:</label>
+                <input type="file" id="photos" multiple accept="image/*" onchange="previewImages(this)">
+                <div id="preview" class="preview"></div>
+            </div>
+            <button onclick="uploadPhotos()">Upload Photos</button>
+            <div id="uploadResult"></div>
+        </div>
+
+        <div class="card">
+            <h2>🖼️ Manage Photos</h2>
+            <div class="form-group">
+                <label>Product ID:</label>
+                <input type="number" id="manageProductId" placeholder="Enter product ID">
+                <button onclick="loadProductPhotos()" style="margin-top: 8px;">Load Photos</button>
+            </div>
+            <div id="photoGallery"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+        
+        function previewImages(input) {
+            const preview = document.getElementById('preview');
+            preview.innerHTML = '';
+            
+            if (input.files) {
+                Array.from(input.files).forEach(file => {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const img = document.createElement('img');
+                        img.src = e.target.result;
+                        preview.appendChild(img);
+                    }
+                    reader.readAsDataURL(file);
+                });
+            }
+        }
+        
+        async function uploadPhotos() {
+            const productId = document.getElementById('productId').value;
+            const token = document.getElementById('token').value;
+            const files = document.getElementById('photos').files;
+            const resultDiv = document.getElementById('uploadResult');
+            
+            if (!productId || !token || !files.length) {
+                showMessage('uploadResult', 'Please fill all fields and select photos', 'error');
+                return;
+            }
+            
+            const formData = new FormData();
+            for (let file of files) {
+                formData.append('photos', file);
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/products/${productId}/images?token=${token}`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showMessage('uploadResult', `✅ ${result.message}. Total images: ${result.totalImages}`, 'success');
+                    document.getElementById('photos').value = '';
+                    document.getElementById('preview').innerHTML = '';
+                    
+                    // Если загружаем фото для того же продукта, обновляем галерею
+                    const manageId = document.getElementById('manageProductId').value;
+                    if (manageId === productId) {
+                        loadProductPhotos();
+                    }
+                } else {
+                    showMessage('uploadResult', `❌ Error: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showMessage('uploadResult', `❌ Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function loadProductPhotos() {
+            const productId = document.getElementById('manageProductId').value;
+            const gallery = document.getElementById('photoGallery');
+            
+            if (!productId) {
+                gallery.innerHTML = '<p style="color:red">Please enter product ID</p>';
+                return;
+            }
+            
+            gallery.innerHTML = '<p>Loading...</p>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/products/${productId}/images`);
+                const images = await response.json();
+                
+                if (!response.ok) {
+                    gallery.innerHTML = `<p style="color:red">Error: ${images.error}</p>`;
+                    return;
+                }
+                
+                if (images.length === 0) {
+                    gallery.innerHTML = '<p>No photos found for this product</p>';
+                    return;
+                }
+                
+                gallery.innerHTML = `
+                    <div class="gallery">
+                        ${images.map((img, idx) => `
+                            <div class="image-card">
+                                <img src="${img.url}" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'200\' height=\'200\' viewBox=\'0 0 200 200\'%3E%3Crect width=\'200\' height=\'200\' fill=\'%23ddd\'/%3E%3Ctext x=\'50%25\' y=\'50%25\' text-anchor=\'middle\' dy=\'.3em\' fill=\'%23999\'%3ENo image%3C/text%3E%3C/svg%3E'">
+                                <div class="image-info">
+                                    <p><strong>Index:</strong> ${idx}</p>
+                                    <p><strong>File:</strong> ${img.filename || 'unknown'}</p>
+                                    <p><strong>Size:</strong> ${(img.size / 1024).toFixed(2)} KB</p>
+                                    <div class="button-group">
+                                        <button onclick="replaceImage(${productId}, ${idx})">Replace</button>
+                                        <button class="danger" onclick="deleteImage(${productId}, ${idx})">Delete</button>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } catch (error) {
+                gallery.innerHTML = `<p style="color:red">Error: ${error.message}</p>`;
+            }
+        }
+        
+        async function deleteImage(productId, index) {
+            const token = prompt('Enter admin token to delete this image:');
+            if (!token) return;
+            
+            if (!confirm('Delete this image?')) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/products/${productId}/images/${index}?token=${token}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    alert('Image deleted successfully');
+                    loadProductPhotos(); // Refresh gallery
+                } else {
+                    alert(`Error: ${result.error}`);
+                }
+            } catch (error) {
+                alert(`Error: ${error.message}`);
+            }
+        }
+        
+        async function replaceImage(productId, index) {
+            const token = prompt('Enter admin token to replace this image:');
+            if (!token) return;
+            
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = 'image/*';
+            fileInput.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const formData = new FormData();
+                formData.append('photo', file);
+                
+                try {
+                    const response = await fetch(`${API_BASE}/api/admin/products/${productId}/images/${index}?token=${token}`, {
+                        method: 'PUT',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        alert('Image replaced successfully');
+                        loadProductPhotos();
+                    } else {
+                        alert(`Error: ${result.error}`);
+                    }
+                } catch (error) {
+                    alert(`Error: ${error.message}`);
+                }
+            };
+            fileInput.click();
+        }
+        
+        function showMessage(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="alert ${type}">${message}</div>`;
+            setTimeout(() => {
+                element.innerHTML = '';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

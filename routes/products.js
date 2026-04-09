@@ -1,33 +1,52 @@
 const express = require('express');
 const router = express.Router();
 const Product = require('../models/Product');
+const multer = require('multer');
 
-// GET /products - получить все товары с пагинацией и фильтрацией
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only images are allowed'), false);
+    }
+  }
+});
+
 router.get('/', async (req, res) => {
   try {
     const { limit = 10, sort, category } = req.query;
     
     let query = {};
-    
-    // Фильтр по категории
     if (category) {
       query.category = category;
     }
     
     let productsQuery = Product.find(query);
     
-    // Сортировка
     if (sort === 'asc') {
       productsQuery = productsQuery.sort('price');
     } else if (sort === 'desc') {
       productsQuery = productsQuery.sort('-price');
     }
     
-    // Лимит
     productsQuery = productsQuery.limit(parseInt(limit));
     
     const products = await productsQuery;
-    res.json(products);
+    
+    const productsWithImages = products.map(product => {
+      const productObj = product.toObject();
+      if (productObj.images && productObj.images.length > 0) {
+        productObj.thumbnailUrl = `/products/${product.id}/images/0/thumbnail`;
+        productObj.mediumUrl = `/products/${product.id}/images/0/medium`;
+      }
+      return productObj;
+    });
+    
+    res.json(productsWithImages);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -42,7 +61,25 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ message: 'Product not found' });
     }
     
-    res.json(product);
+    const productObj = product.toObject();
+    
+    if (productObj.images && productObj.images.length > 0) {
+      productObj.images = productObj.images.map((img, index) => ({
+        index: index,
+        urls: {
+          thumbnail: `/products/${product.id}/images/${index}/thumbnail`,
+          medium: `/products/${product.id}/images/${index}/medium`,
+          original: `/products/${product.id}/images/${index}/original`
+        },
+        filename: img.originalFilename,
+        sizes: {
+          original: img.originalSize,
+          webp: img.webpSize
+        }
+      }));
+    }
+    
+    res.json(productObj);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -51,6 +88,12 @@ router.get('/:id', async (req, res) => {
 // POST /products - создать новый товар
 router.post('/', async (req, res) => {
   try {
+    // Генерируем ID если его нет
+    if (!req.body.id) {
+      const lastProduct = await Product.findOne().sort('-id');
+      req.body.id = lastProduct ? lastProduct.id + 1 : 1;
+    }
+    
     const product = new Product(req.body);
     await product.save();
     res.status(201).json(product);
@@ -98,6 +141,118 @@ router.get('/categories/all', async (req, res) => {
   try {
     const categories = await Product.distinct('category');
     res.json(categories);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// GET /products/:id/images - получить метаданные всех фото
+router.get('/:id/images', async (req, res) => {
+  try {
+    const product = await Product.findOne({ id: parseInt(req.params.id) });
+    
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const images = (product.images || []).map((img, index) => ({
+      index: index,
+      urls: {
+        thumbnail: `/products/${product.id}/images/${index}/thumbnail`,
+        medium: `/products/${product.id}/images/${index}/medium`,
+        original: `/products/${product.id}/images/${index}/original`
+      },
+      filename: img.originalFilename,
+      contentType: img.contentType,
+      sizes: {
+        original: img.originalSize,
+        webp: img.webpSize
+      }
+    }));
+
+    res.json(images);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /products/:id/images/:index/thumbnail - получить thumbnail (200px)
+router.get('/:id/images/:index/thumbnail', async (req, res) => {
+  try {
+    const product = await Product.findOne({ id: parseInt(req.params.id) });
+    
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const images = product.images || [];
+    const index = parseInt(req.params.index);
+    
+    if (index >= images.length || index < 0) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    const image = images[index];
+    const imgBuffer = Buffer.from(image.webp.thumbnail, 'base64');
+    
+    res.set('Content-Type', 'image/webp');
+    res.set('Cache-Control', 'public, max-age=31536000'); // кэш на год
+    res.send(imgBuffer);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /products/:id/images/:index/medium - получить medium (800px)
+router.get('/:id/images/:index/medium', async (req, res) => {
+  try {
+    const product = await Product.findOne({ id: parseInt(req.params.id) });
+    
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const images = product.images || [];
+    const index = parseInt(req.params.index);
+    
+    if (index >= images.length || index < 0) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    const image = images[index];
+    const imgBuffer = Buffer.from(image.webp.medium, 'base64');
+    
+    res.set('Content-Type', 'image/webp');
+    res.set('Cache-Control', 'public, max-age=31536000');
+    res.send(imgBuffer);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /products/:id/images/:index/original - получить оригинал WebP
+router.get('/:id/images/:index/original', async (req, res) => {
+  try {
+    const product = await Product.findOne({ id: parseInt(req.params.id) });
+    
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    const images = product.images || [];
+    const index = parseInt(req.params.index);
+    
+    if (index >= images.length || index < 0) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    const image = images[index];
+    const imgBuffer = Buffer.from(image.webp.original, 'base64');
+    
+    res.set('Content-Type', 'image/webp');
+    res.set('Cache-Control', 'public, max-age=31536000');
+    res.send(imgBuffer);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
